@@ -193,22 +193,43 @@ var server = http.createServer(function (req, res) {
         return;
       }
 
-      // валидация words
+      // ── валидация (дублирует фронтенд — бэкенд последняя защита) ──
+
+      // words: массив из 3–7 непустых строк
       var words = body.words;
-      if (!Array.isArray(words) || words.length < 3 || words.length > 7) {
+      if (!Array.isArray(words)) {
         errorResponse(res, 400, "Provide 3 to 7 keywords as an array");
         return;
       }
+      words = words
+        .map(function (w) { return String(w).trim(); })
+        .filter(Boolean);
+      if (words.length < 3) {
+        errorResponse(res, 400, "Provide at least 3 keywords or phrases");
+        return;
+      }
+      if (words.length > 7) {
+        errorResponse(res, 400, "Too many keywords — maximum 7 allowed");
+        return;
+      }
 
-      // language — строка. Если не указан, используем переданный или "Japanese" по умолчанию
-      var language = typeof body.language === "string" && body.language.trim()
-        ? body.language.trim()
-        : "Japanese";
+      // language: строка, один из 12 поддерживаемых языков (не дефолтим!)
+      var SUPPORTED_LANGS = [
+        "Japanese", "English", "Spanish", "French", "German", "Italian",
+        "Portuguese", "Russian", "Chinese", "Korean", "Arabic", "Hindi"
+      ];
+      var language = typeof body.language === "string" ? body.language.trim() : "";
+      if (!language || SUPPORTED_LANGS.indexOf(language) === -1) {
+        errorResponse(res, 400, "Choose a generation language");
+        return;
+      }
 
-      // wasabiLevel 0–6 без капа
-      var spice = typeof body.wasabiLevel === "number" && !isNaN(body.wasabiLevel)
-        ? Math.max(0, Math.min(6, body.wasabiLevel))
-        : 0;
+      // wasabiLevel: целое число 0–6
+      var spice = body.wasabiLevel;
+      if (typeof spice !== "number" || isNaN(spice) || spice !== Math.floor(spice) || spice < 0 || spice > 6) {
+        errorResponse(res, 400, "Wasabi level must be a whole number from 0 to 6");
+        return;
+      }
 
       sdelatHaiku(words, language, spice, res);
     });
