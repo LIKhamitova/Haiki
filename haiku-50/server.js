@@ -15,6 +15,9 @@ if (!OPENAI_KEY) {
   OPENAI_KEY = ""; // сервер запустится, но генерация через AI будет падать с ошибкой
 }
 
+// модель OpenAI — вынесена в одну константу
+var AI_MODEL = "gpt-5-nano-2025-08-07";
+
 var HISTORY = []; // in-memory история (до 500, потом сдвиг)
 
 // rate limiter: 10 запросов с одного IP в минуту
@@ -105,10 +108,8 @@ function sdelatHaiku(words, language, spice, res) {
     "Return STRICTLY three lines. Each line on its own line. No titles, no numbering, no quotation marks, no explanations, no translation.\n" +
     "Avoid profanity, offensive content, or aggression.";
 
-  var model = spice > 0 ? "gpt-4" : "gpt-4o-mini";
-
   var body = JSON.stringify({
-    model: model,
+    model: AI_MODEL,
     messages: [{ role: "user", content: prompt }],
   });
 
