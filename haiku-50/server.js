@@ -4,11 +4,37 @@
 var http = require("http");
 var https = require("https");
 var fs = require("fs");
+var path = require("path");
+
+// ── ручная загрузка .env (без dotenv — проект без зависимостей) ──
+(function loadenv() {
+  try {
+    var envPath = path.join(__dirname, "..", ".env");
+    var text = fs.readFileSync(envPath, "utf8");
+    text.split("\n").forEach(function (line) {
+      var trimmed = line.trim();
+      if (!trimmed || trimmed.charAt(0) === "#") return;
+      var sep = trimmed.indexOf("=");
+      if (sep === -1) return;
+      var key = trimmed.slice(0, sep).trim();
+      var val = trimmed.slice(sep + 1).trim();
+      // срезаем кавычки, если есть
+      if ((val.charAt(0) === '"' && val.charAt(val.length - 1) === '"') ||
+          (val.charAt(0) === "'" && val.charAt(val.length - 1) === "'")) {
+        val = val.slice(1, -1);
+      }
+      if (!process.env[key]) process.env[key] = val;
+    });
+  } catch (e) {
+    // .env нет — не страшно, ключ может быть в переменных окружения
+  }
+})();
 
 // все тексты и конфигурация AI — в отдельном файле
 var CONFIG = require("./prompts");
 
-var PORT = process.env.PORT || 3000;
+var PORT = process.env.PORT;
+if (PORT === "0" || !PORT) PORT = 3000;
 
 // ключ читаем из .env, чтобы не светить в репозитории
 // скопируй .env.example в .env и вставь туда свой ключ
