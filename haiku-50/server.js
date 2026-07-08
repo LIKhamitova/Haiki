@@ -99,65 +99,134 @@ function successResponse(res, lines, words, language, spice) {
   jsonResponse(res, 200, { success: true, lines: lines, source: "openai" });
 }
 
-// генерация: промпт и модель зависят от остроты (spice)
+// ── нормализация сырого ответа AI ──
+// модель часто оборачивает текст в ```, добавляет «Вот ваше хайку:» и т.д.
+function normalizuj(text) {
+  if (!text) return [];
+  // срезаем markdown-блоки ```text … ```, ``` … ``` и подобные
+  text = text.replace(/```[\w]*\s*/gi, "").replace(/```/g, "");
+  // срезаем пояснения до и после — ищем первую и последнюю строки хайку
+  var lines = text.split("\n")
+    .map(function (l) { return l.trim(); })
+    .filter(Boolean);
+  // убираем строки, похожие на пояснения: начинаются с «Вот», «Here's», «Sure», «Of course»,
+  // «Конечно», «Voici», «Aquí», «Ecco», «Вот», «当然», заканчиваются на : или —
+  var haikuLines = [];
+  for (var i = 0; i < lines.length; i++) {
+    var l = lines[i];
+    // срезаем нумерацию, кавычки, дефисы, звёздочки в начале строки
+    l = l.replace(/^[\s\-–—\d.)»«"''*•·]+/, "").trim();
+    // срезаем заведомо не-хайку: заголовки, пояснения, переводы
+    var preamble = /^(вот|here'?s|sure|of course|конечно|voici|aquí|ecco|当然|नमस्ते|i('d| would)|попробую|вот ваше)/i;
+    var suffix = /[:—–]$/;
+    if (preamble.test(l) || suffix.test(l)) continue;
+    // строка с двоеточием в начале («Хайку:») — срезаем до двоеточия
+    l = l.replace(/^[^:]*:\s*/, "").trim();
+    if (l) haikuLines.push(l);
+  }
+  return haikuLines.slice(0, 3);
+}
+
+// ── два слоя промпта: базовый + острота ──
 function sdelatHaiku(words, language, spice, res) {
-  var prompt =
-    "You are a haiku master. Write one three-line haiku in " + language + ".\n" +
-    "Use these images and keywords: " + words.join(", ") + ".\n" +
-    (spice > 0 ? "Make it SPICY and absurd, heat " + spice + " of 6.\n" : "") +
-    "Return STRICTLY three lines. Each line on its own line. No titles, no numbering, no quotation marks, no explanations, no translation.\n" +
-    "Avoid profanity, offensive content, or aggression.";
+  // слой 1 — база: язык, слова, формат
+  var basePrompt =
+    "Write a three-line haiku in " + language + ".\n" +
+    "Keywords: " + words.join(", ") + ".\n" +
+    "Be brief, poetic. No titles, no explanations before or after the haiku.\n";
+
+  // слой 2 — острота (0–6)
+  var SPICE_LAYER = [
+    "",                                                                          // 0 — только база
+    "Mood: gentle and quiet.",                                                   // 1
+    "Mood: slightly unexpected, subtle irony.",                                  // 2
+    "Mood: playful, with a humorous twist.",                                     // 3
+    "Mood: bold and sharp, an absurd image.",                                    // 4
+    "Mood: very spicy, chaotic, grotesque and funny.",                           // 5
+    "Mood: maximum heat — absurd, surreal, dark-humored, yet still a haiku.",    // 6
+  ];
+
+  var prompt = basePrompt + (spice > 0 ? SPICE_LAYER[spice] + "\n" : "");
+
+  // безопасность — всегда
+  prompt += "No profanity, no aggression, no prohibited content.\n" +
+    "Return ONLY three lines of haiku, nothing else.";
 
   var body = JSON.stringify({
     model: AI_MODEL,
     messages: [{ role: "user", content: prompt }],
   });
 
-  var r = https.request(
-    {
-      hostname: "api.openai.com",
-      path: "/v1/chat/completions",
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer " + OPENAI_KEY,
-        "Content-Length": Buffer.byteLength(body),
+  var attemptCount = 0;
+  var MAX_ATTEMPTS = 2;
+
+  function otslat() {
+    attemptCount++;
+    var r = https.request(
+      {
+        hostname: "api.openai.com",
+        path: "/v1/chat/completions",
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + OPENAI_KEY,
+          "Content-Length": Buffer.byteLength(body),
+        },
       },
-    },
-    function (resp) {
-      var data = "";
-      resp.on("data", function (chunk) { data += chunk; });
-      resp.on("end", function () {
-        try {
-          var parsed = JSON.parse(data);
-          if (parsed.error) {
-            errorResponse(res, 502, "OpenAI API error: " + (parsed.error.message || "unknown"));
-            return;
+      function (resp) {
+        var data = "";
+        resp.on("data", function (chunk) { data += chunk; });
+        resp.on("end", function () {
+          try {
+            var parsed = JSON.parse(data);
+            if (parsed.error) {
+              errorResponse(res, 502, "OpenAI API error: " + (parsed.error.message || "unknown"));
+              return;
+            }
+            var text = parsed.choices[0].message.content;
+
+            // нормализуем: срезаем markdown-обёртку, пояснения, нумерацию
+            var lines = normalizuj(text);
+
+            // если после нормализации не ровно 3 строки — пробуем ещё раз с жёстким промптом
+            if (lines.length !== 3) {
+              if (attemptCount < MAX_ATTEMPTS) {
+                // повтор с требованием исправить формат
+                body = JSON.stringify({
+                  model: AI_MODEL,
+                  messages: [
+                    { role: "user", content: prompt },
+                    { role: "assistant", content: text },
+                    { role: "user", content: "That is not valid. Return EXACTLY three lines, one per line. No markdown, no explanations, no numbering, no preamble, no translation." },
+                  ]
+                });
+                otslat();
+                return;
+              }
+              errorResponse(res, 502, "AI returned " + lines.length + " lines instead of 3 — try again");
+              return;
+            }
+
+            successResponse(res, lines, words, language, spice);
+          } catch (e) {
+            errorResponse(res, 502, "Failed to parse AI response");
           }
-          var text = parsed.choices[0].message.content;
-          var lines = (text || "").trim().split("\n").map(function (l) { return l.replace(/^[\s\-\d.)»«"']+/, "").trim(); }).filter(Boolean).slice(0, 3);
-          if (lines.length === 0) {
-            errorResponse(res, 502, "AI returned empty response");
-            return;
-          }
-          successResponse(res, lines, words, language, spice);
-        } catch (e) {
-          errorResponse(res, 502, "Failed to parse AI response");
-        }
-      });
-    }
-  );
-  // таймаут 30 с — если OpenAI не отвечает, отдаём 504 и чистим сокет
-  r.setTimeout(30000, function () {
-    if (!res.headersSent) errorResponse(res, 504, "AI request timed out");
-    r.destroy();
-  });
-  r.on("error", function (err) {
-    if (res.headersSent) return; // уже обработано таймаутом
-    errorResponse(res, 502, "Network error calling AI: " + (err.message || "unknown"));
-  });
-  r.write(body);
-  r.end();
+        });
+      }
+    );
+    r.setTimeout(30000, function () {
+      if (!res.headersSent) errorResponse(res, 504, "AI request timed out");
+      r.destroy();
+    });
+    r.on("error", function (err) {
+      if (res.headersSent) return;
+      errorResponse(res, 502, "Network error calling AI: " + (err.message || "unknown"));
+    });
+    r.write(body);
+    r.end();
+  }
+
+  otslat();
 }
 
 var server = http.createServer(function (req, res) {

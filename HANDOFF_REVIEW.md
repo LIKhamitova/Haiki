@@ -251,12 +251,19 @@ node haiku-50/server.js
 | HTTP 200 при ошибке | Всегда 200 | 400 (невалидный запрос), 502 (OpenAI error) |
 | JSON-экранирование | Только `\n` | `JSON.stringify` — полное экранирование |
 
-### 8.3 OpenAI API — вызов
+### 8.3 OpenAI API — вызов + нормализация ответа 🔴 ПЕРЕПРОЕКТИРОВАНО (2026-07-08)
+
+**Требование:** промпт — два слоя (базовый + острота), нормализация ответа с обрезкой markdown и preamble, строгая проверка ровно 3 строк.
+
+**Было:** плоский промпт, split по `\n` + простой regex, нет retry.
 
 | Аспект | Было | Стало |
 |---|---|---|
 | Язык в промпте | Хардкод "Japanese" | Из поля `language` запроса |
-| Safety | Отсутствовал | `"Avoid profanity, offensive content, or aggression."` |
+| Промпт | Плоский, смешаны база и spice | **Два слоя:** слой 1 — `Write a three-line haiku in {language}. Keywords: {words}. Be brief, poetic. No titles, no explanations.` + слой 2 — `Mood: …` (0 = пусто, 1–6 = от gentle до absurd/surreal) |
+| Safety | `"Avoid profanity…"` одной строкой | `"No profanity, no aggression, no prohibited content."` в конце промпта |
+| Нормализация | `split("\n")` + `replace(/^[\s\-\d.)»«"']+/)` | **`normalizuj()`:** срезает markdown-блоки ` ```text…``` `, срезает preamble (`Вот`, `Here's`, `Sure`, `Конечно`, `Voici` и т.д.), срезает нумерацию/кавычки/звёздочки, срезает строки, заканчивающиеся на `:` или `—` |
+| Проверка строк | `slice(0, 3)` — допускал <3 | **Строго 3 строки.** Если после нормализации `!== 3` — retry с correction-prompt (`"That is not valid. Return EXACTLY three lines…"`). Max 2 попытки. Если снова не 3 → `errorResponse(502)` |
 | Обработка ошибок OpenAI | `catch → makeHaikuLocal()` молча | Проверка `parsed.error` → `errorResponse(502)` |
 | Пустой ответ AI | `parsed.choices[0].message.content` без проверки | Проверка `lines.length === 0` → `errorResponse(502)` |
 
@@ -287,7 +294,7 @@ node haiku-50/server.js
 |---|---|---|
 | API-ключ только на бэкенде | ✅ Вынесен в `.env`, добавлен в `.gitignore` | server.js:12-16, .env, .gitignore |
 | 12 языков | ✅ 12 реальных языков, без заглушек | script.js:3-16 |
-| Язык в промпте | ✅ Язык из запроса подставляется в промпт | server.js:69, 116 |
+| Язык в промпте | ✅ Два слоя (база + острота 0–6), нормализация `normalizuj()`, retry при не-3 строках | server.js:104-128, 130-160 |
 | Поле keywords не очищается после генерации | ✅ | script.js — нет сброса state.keywords |
 | Кнопка очистки keywords | ✅ Добавлен обработчик | script.js:353-358 |
 | Валидация <3, >7, пустой язык, wasabi 0–6 | ✅ Дублирована на бэкенде — фронтенд легко обойти | script.js:269-289, server.js:196-232 |
