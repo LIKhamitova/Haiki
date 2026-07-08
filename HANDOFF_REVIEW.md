@@ -308,6 +308,7 @@ node haiku-50/server.js
 | История 100 в браузере | ✅ 100 вместо 8 | script.js:302, 326 (2 места) |
 | Серверное in-memory — опция | ✅ Лимит 500, возврат в формате клиента | server.js:41-48, 206 |
 | Bento Grid / минимализм | ✅ | styles.css (grid-template-areas) |
+| Language dropdown не перекрывается карточкой Wasabi | ✅ `z-index: 100` при открытии меню | styles.css:471-473, script.js:162 |
 | Node.js без зависимостей | ✅ | Только http, https, fs |
 | Фронтенд → бэкенд → OpenAI | ✅ fetch POST /generate-haiku — единственный путь к AI | script.js:281-288, server.js:170-201 |
 | Парсинг тела POST через JSON.parse | ✅ JSON.parse + валидация | server.js:173-196 |
@@ -431,3 +432,16 @@ Map пишет новые записи, но никогда не удаляет 
 | Поддержка `process.env.PORT` для хостинга | `server.js:8` | `var PORT = process.env.PORT || 3000;` |
 | Лимит тела POST-запроса (1 МБ) | `server.js:155-162` | При превышении → `errorResponse(413)` |
 | `unhandledRejection` — логирование + `process.exit(1)` | `server.js:35-40` | Аналогично `uncaughtException` |
+
+---
+
+## 12. Language dropdown перекрывался карточкой Wasabi ✅ ИСПРАВЛЕНО
+
+**Проблема:** `backdrop-filter: blur(10px)` на классе `.card` создаёт отдельный stacking context для каждой карточки. Wasabi-карта идёт после language-карты в DOM → её stacking context выше, и абсолютно позиционированный дропдаун языка оказывается под ней.
+
+**Исправлено (2026-07-08):**
+
+| Изменение | Файл | Доказательство |
+|---|---|---|
+| CSS: `.language-card.is-open { z-index: 100; }` | `styles.css:471-473` | При открытии меню карточка языка поднимается над соседними карточками |
+| JS: `els.languageCard.classList.toggle("is-open", state.langOpen)` | `script.js:162` | Класс `is-open` добавляется/убирается вместе с видимостью меню |

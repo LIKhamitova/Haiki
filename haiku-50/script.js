@@ -160,6 +160,7 @@ function renderLanguage() {
   els.languageButton.classList.toggle("has-value", Boolean(state.lang));
   els.languageButton.setAttribute("aria-expanded", String(state.langOpen));
   els.languageMenu.classList.toggle("is-hidden", !state.langOpen);
+  els.languageCard.classList.toggle("is-open", state.langOpen);
   els.languageMenu.innerHTML = "";
 
   LANGS.forEach((lang) => {

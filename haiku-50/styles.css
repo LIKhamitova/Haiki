@@ -469,6 +469,10 @@ textarea:focus {
   padding: 22px;
 }
 
+.language-card.is-open {
+  z-index: 100;
+}
+
 .field-title {
   display: block;
   margin-bottom: 12px;
