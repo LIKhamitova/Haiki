@@ -9,6 +9,7 @@
 
 ### Структура файлов
 - **`haiku-50/server.js`** — Node.js HTTP-сервер (чистый `http.createServer`, без Express). Раздаёт статику, принимает POST на `/generate-haiku`, `/generateHaiku`, `/generate`, отдаёт `GET /history`.
+- **`haiku-50/prompts.js`** — все тексты AI-промптов, модель, слой остроты, safety-инструкции, список языков. Единая точка правки без изменения кода сервера.
 - **`haiku-50/index.html`** — SPA: 6 карточек (result, keywords, language, wasabi, history, info) + сплэш-скрин.
 - **`haiku-50/script.js`** — клиентская логика: состояние, рендеринг, генерация, история.
 - **`haiku-50/styles.css`** — 854 строки, 3 брейкпоинта, Bento Grid, glassmorphism, анимации.
@@ -261,6 +262,7 @@ node haiku-50/server.js
 |---|---|---|
 | Язык в промпте | Хардкод "Japanese" | Из поля `language` запроса |
 | Промпт | Плоский, смешаны база и spice | **Два слоя:** слой 1 — `Write a three-line haiku in {language}. Keywords: {words}. Be brief, poetic. No titles, no explanations.` + слой 2 — `Mood: …` (0 = пусто, 1–6 = от gentle до absurd/surreal) |
+| Расположение текстов | Инлайн в `sdelatHaiku()` | **Отдельный файл `prompts.js`** — модель, шаблоны, слой остроты, safety, correction-prompt, список языков. server.js читает через `require("./prompts")` и `CONFIG.*` |
 | Safety | `"Avoid profanity…"` одной строкой | `"No profanity, no aggression, no prohibited content."` в конце промпта |
 | Нормализация | `split("\n")` + `replace(/^[\s\-\d.)»«"']+/)` | **`normalizuj()`:** срезает markdown-блоки ` ```text…``` `, срезает preamble (`Вот`, `Here's`, `Sure`, `Конечно`, `Voici` и т.д.), срезает нумерацию/кавычки/звёздочки, срезает строки, заканчивающиеся на `:` или `—` |
 | Проверка строк | `slice(0, 3)` — допускал <3 | **Строго 3 строки.** Если после нормализации `!== 3` — retry с correction-prompt (`"That is not valid. Return EXACTLY three lines…"`). Max 2 попытки. Если снова не 3 → `errorResponse(502)` |
@@ -293,8 +295,9 @@ node haiku-50/server.js
 | Требование | Статус | Подтверждение |
 |---|---|---|
 | API-ключ только на бэкенде | ✅ Вынесен в `.env`, добавлен в `.gitignore` | server.js:12-16, .env, .gitignore |
+| Тексты AI (промпты, модель, языки) | ✅ Вынесены в отдельный файл — менять можно без правки кода | prompts.js |
 | 12 языков | ✅ 12 реальных языков, без заглушек | script.js:3-16 |
-| Язык в промпте | ✅ Два слоя (база + острота 0–6), нормализация `normalizuj()`, retry при не-3 строках | server.js:104-128, 130-160 |
+| Язык в промпте | ✅ Два слоя (база + острота 0–6), нормализация `normalizuj()`, retry при не-3 строках | prompts.js, server.js:130-160 |
 | Поле keywords не очищается после генерации | ✅ | script.js — нет сброса state.keywords |
 | Кнопка очистки keywords | ✅ Добавлен обработчик | script.js:353-358 |
 | Валидация <3, >7, пустой язык, wasabi 0–6 | ✅ Дублирована на бэкенде — фронтенд легко обойти | script.js:269-289, server.js:196-232 |

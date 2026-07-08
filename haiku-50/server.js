@@ -5,6 +5,9 @@ var http = require("http");
 var https = require("https");
 var fs = require("fs");
 
+// все тексты и конфигурация AI — в отдельном файле
+var CONFIG = require("./prompts");
+
 var PORT = process.env.PORT || 3000;
 
 // ключ читаем из .env, чтобы не светить в репозитории
@@ -14,9 +17,6 @@ if (!OPENAI_KEY) {
   console.log("⚠️  OPENAI_API_KEY не найден в переменных окружения. Создай .env из .env.example");
   OPENAI_KEY = ""; // сервер запустится, но генерация через AI будет падать с ошибкой
 }
-
-// модель OpenAI — вынесена в одну константу
-var AI_MODEL = "gpt-5-nano-2025-08-07";
 
 var HISTORY = []; // in-memory история (до 500, потом сдвиг)
 
@@ -130,30 +130,18 @@ function normalizuj(text) {
 // ── два слоя промпта: базовый + острота ──
 function sdelatHaiku(words, language, spice, res) {
   // слой 1 — база: язык, слова, формат
-  var basePrompt =
-    "Write a three-line haiku in " + language + ".\n" +
-    "Keywords: " + words.join(", ") + ".\n" +
-    "Be brief, poetic. No titles, no explanations before or after the haiku.\n";
+  var basePrompt = CONFIG.BASE_PROMPT_TEMPLATE
+    .replace("{language}", language)
+    .replace("{keywords}", words.join(", "));
 
   // слой 2 — острота (0–6)
-  var SPICE_LAYER = [
-    "",                                                                          // 0 — только база
-    "Mood: gentle and quiet.",                                                   // 1
-    "Mood: slightly unexpected, subtle irony.",                                  // 2
-    "Mood: playful, with a humorous twist.",                                     // 3
-    "Mood: bold and sharp, an absurd image.",                                    // 4
-    "Mood: very spicy, chaotic, grotesque and funny.",                           // 5
-    "Mood: maximum heat — absurd, surreal, dark-humored, yet still a haiku.",    // 6
-  ];
+  var prompt = basePrompt + (spice > 0 ? CONFIG.SPICE_LAYER[spice] + "\n" : "");
 
-  var prompt = basePrompt + (spice > 0 ? SPICE_LAYER[spice] + "\n" : "");
-
-  // безопасность — всегда
-  prompt += "No profanity, no aggression, no prohibited content.\n" +
-    "Return ONLY three lines of haiku, nothing else.";
+  // безопасность + формат — всегда
+  prompt += CONFIG.SAFETY_INSTRUCTION + "\n" + CONFIG.FORMAT_INSTRUCTION;
 
   var body = JSON.stringify({
-    model: AI_MODEL,
+    model: CONFIG.AI_MODEL,
     messages: [{ role: "user", content: prompt }],
   });
 
@@ -193,11 +181,11 @@ function sdelatHaiku(words, language, spice, res) {
               if (attemptCount < MAX_ATTEMPTS) {
                 // повтор с требованием исправить формат
                 body = JSON.stringify({
-                  model: AI_MODEL,
+                  model: CONFIG.AI_MODEL,
                   messages: [
                     { role: "user", content: prompt },
                     { role: "assistant", content: text },
-                    { role: "user", content: "That is not valid. Return EXACTLY three lines, one per line. No markdown, no explanations, no numbering, no preamble, no translation." },
+                    { role: "user", content: CONFIG.CORRECTION_PROMPT },
                   ]
                 });
                 otslat();
@@ -283,12 +271,8 @@ var server = http.createServer(function (req, res) {
       }
 
       // language: строка, один из 12 поддерживаемых языков (не дефолтим!)
-      var SUPPORTED_LANGS = [
-        "Japanese", "English", "Spanish", "French", "German", "Italian",
-        "Portuguese", "Russian", "Chinese", "Korean", "Arabic", "Hindi"
-      ];
       var language = typeof body.language === "string" ? body.language.trim() : "";
-      if (!language || SUPPORTED_LANGS.indexOf(language) === -1) {
+      if (!language || CONFIG.SUPPORTED_LANGS.indexOf(language) === -1) {
         errorResponse(res, 400, "Choose a generation language");
         return;
       }
