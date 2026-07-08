@@ -5,7 +5,7 @@ var http = require("http");
 var https = require("https");
 var fs = require("fs");
 
-var PORT = 3000;
+var PORT = process.env.PORT || 3000;
 
 // ключ читаем из .env, чтобы не светить в репозитории
 // скопируй .env.example в .env и вставь туда свой ключ
@@ -21,6 +21,23 @@ var HISTORY = []; // in-memory история (до 500, потом сдвиг)
 var RATE_LIMIT_MAP = new Map();
 var RATE_LIMIT_WINDOW_MS = 60_000; // 1 минута
 var RATE_LIMIT_MAX = 10;           // макс запросов в окно
+
+// периодическая чистка RATE_LIMIT_MAP от записей, чьё окно истекло
+// предотвращает утечку памяти при большом количестве уникальных IP
+var RATE_LIMIT_CLEANUP_MS = 5 * 60 * 1000; // 5 минут
+setInterval(function () {
+  var cutoff = Date.now() - RATE_LIMIT_WINDOW_MS - 5000; // +5s запас
+  RATE_LIMIT_MAP.forEach(function (entry, ip) {
+    if (entry.windowStart < cutoff) RATE_LIMIT_MAP.delete(ip);
+  });
+}, RATE_LIMIT_CLEANUP_MS);
+
+// ловим rejected promises — тоже логируем stack trace и завершаем процесс
+process.on("unhandledRejection", function (reason) {
+  console.error("❌ Необработанный reject промиса:", reason);
+  if (reason && reason.stack) console.error("Stack trace:", reason.stack);
+  process.exit(1);
+});
 
 // логируем неожиданную ошибку со stack trace и завершаем процесс
 // сервер с неопределённым состоянием продолжать работу опасно
@@ -150,8 +167,23 @@ var server = http.createServer(function (req, res) {
     if (isRateLimited(clientIP, res)) return;
 
     var raw = "";
-    req.on("data", function (chunk) { raw += chunk; });
+    var bodySize = 0;
+    var MAX_BODY_SIZE = 1024 * 1024; // 1 MB
+    var requestAborted = false;
+
+    req.on("data", function (chunk) {
+      if (requestAborted) return;
+      bodySize += chunk.length;
+      if (bodySize > MAX_BODY_SIZE) {
+        requestAborted = true;
+        errorResponse(res, 413, "Request body too large");
+        req.destroy();
+        return;
+      }
+      raw += chunk;
+    });
     req.on("end", function () {
+      if (requestAborted) return; // тело превысило лимит, ответ уже отправлен
       var body;
       try {
         body = JSON.parse(raw);
